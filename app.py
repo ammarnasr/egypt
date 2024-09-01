@@ -11,7 +11,14 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from bs4 import BeautifulSoup
 import json
 import os
+import datetime
+from collections import deque
+from typing import Deque
+import math
 
+
+AppointmentTime = datetime.datetime
+AppointmentTimes = Deque[AppointmentTime]
 
 
 def extract_info(soup):
@@ -163,8 +170,9 @@ def scrape_scheduling_page(url):
 
 
 
-
-def main(freq=60):
+def main(appointment_times: AppointmentTimes, 
+         grace_period: datetime.timedelta, 
+         timezone: datetime.timezone) -> None:
     st.title("Egyptian Consulate Scheduling Scraper")
     url = "https://app.acuityscheduling.com/schedule.php?owner=29805901&all=1&PHPSESSID=sehgvlmp5q67mjjs10mvltl7sv"
     if 'last_run' not in st.session_state:st.session_state.last_run = []
@@ -225,14 +233,24 @@ def main(freq=60):
 
     # Rerun the app after freq seconds
     with st.empty():
-        for i in range(freq):
-            st.write(f"Time until rerun: {freq - i} seconds")
-            time.sleep(1)
-    st.write("Rerunning...")
-    st.rerun()
+        while True:
+            now = datetime.datetime.fromtimestamp(time.time(), tz=timezone)
+            if now >= appointment_times[0]:
+                diffenrece = now - appointment_times[0]
+                if diffenrece <= grace_period:
+                    st.rerun()
+                else: # if the postive time difference is outside the grace period
+                    appointment_times.rotate(-1)
+            else: # if still below the nearest , show difference and wait 1/10 of difference
+                diffenrece = appointment_times[0] - now
+                seconds_left = diffenrece.seconds
+                hours, remainder = divmod(seconds_left, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                st.write(f'Time to Next appointment check hours:{hours:02d} minutes:{minutes:02d} seconds:{seconds:02d}')
+                time.sleep(int(seconds_left/10))
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="Egyptian Consulate Scheduling Scraper", page_icon="🕵️", layout='wide')
+    st.set_page_config(page_title="Egyptians Consulate Scheduling Scraper", page_icon="🕵️", layout='wide')
 
     # create log files if they don't exist
     if not os.path.exists("successful_runs.log"):
@@ -249,4 +267,29 @@ if __name__ == "__main__":
     with open("failed_runs.log", "r") as file:
         failed_runs = file.read()
         st.download_button("Download failed runs log", failed_runs, "failed_runs.log", "text/plain")
-    main(3)
+
+
+    dubai_utc = datetime.timedelta(hours = 4)
+    dubai_timezone = datetime.timezone(offset=dubai_utc, name='Dubai UTC+4')
+    today_date = datetime.datetime.today()
+    first_appointment_time = datetime.datetime(
+        year=today_date.year,
+        month=today_date.month,
+        day=today_date.day,
+        hour=6,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=dubai_timezone
+    )
+    appointment_interval = datetime.timedelta(minutes=15)
+    number_of_appointments = 48
+    appointment_times = [first_appointment_time]
+    for i in range(number_of_appointments):
+        next_appointment_time = appointment_times[-1] + appointment_interval
+        appointment_times.append(next_appointment_time)
+
+    appointment_times = deque(appointment_times)
+    grace_period = datetime.timedelta(minutes=3)
+
+    main(appointment_times, grace_period, dubai_timezone)
